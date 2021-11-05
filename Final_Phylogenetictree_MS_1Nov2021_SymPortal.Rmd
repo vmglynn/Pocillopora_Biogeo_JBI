@@ -1,0 +1,237 @@
+---
+title: "SymPortal final phylogenetic tree - MS biogeo 1 Nov 2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+rm(list = ls())
+library(tidyr)
+library(purrr)
+library(metagMisc)
+library(kableExtra)
+library(reshape2)
+library(stringr)
+library(phyloseq)
+library(magrittr)
+library(metagMisc)
+library(randomForest)
+library(seqinr)
+library(gridExtra)
+library(remotes)
+library(igraph)
+library(ellipse)
+library(indicspecies)
+library(yhat)
+library("dunn.test")
+library("treeio")
+```
+
+
+```{r}
+## Remember to setwd to where rds files are found
+##setwd("~/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv")
+
+##Read rds file generated from DADA2
+ps <- readRDS("/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv/symITSps_may2021.rds")
+ps 
+```
+
+```{r}
+taxa_names(ps) <- paste0("asv", seq(ntaxa(ps))) 
+# explicitly rename taxas to asvs
+
+otu <- otu_table(ps)
+sam <- sample_data(ps)
+
+
+FastTree_Pdam <- read.newick("/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv/FastTree_Pdampruned_notax.DINO", node.label = "label")  
+tre <- phy_tree(FastTree_Pdam)
+
+```
+
+```{r}
+##Taxa import, below is for the NCBI search, which was as follows on our Compute Canada clusters:
+
+###blastn \
+###-query uniqueSeqs_F-asv.fasta \
+###-db nt \
+###-out SymPortal_NCBIcrossref_Fb5.csv \
+###-evalue 1e-5 \
+###-outfmt "6 qseqid sseqid sscinames scomnames sskingdoms stitle qstart qend mismatch evalue length" \
+###-max_target_seqs 5
+
+## For NCBI, I manually looked through the generated table to assign clade and type level identifications. 
+
+##I also used SymPortal for taxonomic assignment, but this did not result in ITS clades being grouped together. This was run using the following: 
+
+###vsearch --usearch_global uniqueSeqs_DINO_Stewart.fasta --db refSeqDB.fa --blast6out DINOSt_taxa.txt --id 0.6 --output_no_hits --db refSeqDB.fa nomatch_DINOST.txt}
+```
+
+```{r}
+taxtable<-read.csv("/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv/SymPortaltaxa_Poc_DINO_Sep2020.csv")
+summary(taxtable)
+
+##This CSVs has all N sequences removed, as not informative 
+```
+
+```{r}
+## taxonomy table into matrix 
+taxmat<-as.matrix(taxtable[,2:3])
+rownames(taxmat)<-taxtable$ASV
+```
+
+```{r}
+
+##Combine the taxonomy matrix and the otu_table (otus) into a phyloseq object
+
+TAX = tax_table(taxmat)
+
+## Check if any duplicated row names
+
+duplicated(TAX)
+
+taxa_are_rows(TAX)
+
+any(duplicated(rownames(TAX)))
+
+which(duplicated(rownames(TAX)))
+
+#Rename so tree matches TAX file
+taxa_names(TAX) <- gsub(taxa_names(TAX), pattern = "asv", replacement = "Seq")  
+taxa_names(TAX)
+
+taxa_names(otu) <- gsub(taxa_names(otu), pattern = "asv", replacement = "Seq")  
+taxa_names(otu)
+```
+
+```{r}
+##Merge all components into single phyloseq obj
+ps_tax = phyloseq(otu, TAX, sam, tre)
+
+ps_tax
+
+```
+
+
+```{r}
+
+#Remove samples less 1000 reads
+
+ps1 = prune_samples(sample_sums(ps_tax) > 1000, ps_tax)
+ps1
+
+#Remove taxa not seen more than 1 times in at least 5% of the samples
+
+ps2 = filter_taxa(ps1, function(x) sum(x > 1) > (0.05*length(x)), TRUE)
+ps2
+
+# keep only taxa that were observed at least twice
+ps3 = prune_taxa(taxa_sums(ps2) >= 2, ps2)
+ps3 
+
+# remove taxonomy samples that were Ns
+
+ps4 = subset_samples(ps3, Spec != "P_spp")
+
+## Remove Fr Poly as ASVs all = 0
+
+ps5 = subset_samples(ps4, Loc != "FrenPoly") 
+```
+
+```{r}
+## Assign ASV numeric values to replace sequences
+##n_seqs <- seq(ntaxa(ps5))
+##len_n_seqs <- nchar(max(n_seqs))
+##taxa_seqs <- taxa_names(ps5)
+##asvs <- paste("ASV", formatC(n_seqs,
+##width = len_n_seqs,
+##flag = "0"), sep = "_")
+##taxa_names(ps5) <- asvs
+
+## remove samples with otu = 0 
+ps6 <- prune_samples(sample_sums(ps5) >= 1, ps5)
+```
+
+```{r}
+
+##dfASV_seq <- data.frame(asv=asvs, seq=taxa_seqs, stringsAsFactors = FALSE)
+##write.csv(dfASV_seq, file="dfASV_seq.csv", row.names = FALSE)
+##write.fasta(as.list(taxa_seqs), asvs, "asv_seq.fasta", open = "w", nbchar = 60, as.string =TRUE)
+
+##saveRDS(dfASV_seq, file="dfASV_Seq.rds")
+```
+
+```{r}
+## Remove singletons
+ps6_filt <- filter_taxa(ps6, function(x) sum(x > 1) > 1, TRUE)
+ps6_filt
+```
+
+```{r}
+
+## CSS transformation
+
+ps6_filt_css <- phyloseq_transform_css(ps6_filt, norm = TRUE, log = FALSE)
+ps_normalized <- list()
+normalization <- 'css'
+ps_normalized[[normalization]] <- ps6_filt_css
+ps_normalized[[normalization]]
+
+colnames(sample_data(ps6_filt_css))
+saveRDS(ps6_filt_css, file="ps6_filt_css.rds")
+
+```
+
+```{r}
+
+## Set random seed for reproducibility 
+
+set.seed(8765)
+
+##Alpha div
+
+#Remove Panama
+ps7 <- subset_samples(ps6_filt_css, Loc != "Panam") 
+
+#Remove P. me
+ps8 <- subset_samples(ps7, Spec != "P_me") 
+
+ps9 = subset_samples(ps8, Spec == "P_dam")
+
+ps10 = subset_samples(ps9, Loc != "Aus_GBR_Heron") 
+ps11 = subset_samples(ps10, Season != "Summer") 
+ps12 = subset_samples(ps11, Tbl_bin != "Bleaching") 
+ps13 = subset_samples(ps12, Loc != "NewCal") 
+
+ps13
+colnames(sample_data(ps13))
+head(sample_data(ps13))
+```
+
+```{r}
+
+library(ggtree)
+
+#Merge samples for abundance plots by species
+
+HSmerge <- merge_samples(ps13, "Spec")
+
+##Phylogenetic tree by clade
+
+itsc_tree <- plot_tree(HSmerge, color="ITSclade", ladderize="right", label.tips="taxa_names") + geom_treescale() 
+
+itsc_tree
+
+##Phylogenetic tree by type
+
+itst_tree <- plot_tree(HSmerge, color="ITStype", ladderize="right", label.tips="taxa_names") + geom_treescale() 
+
+itst_tree
+
+ggsave("Phylotree_SYMPORTAL_ITSclade_1Nov2021.pdf")
+
+```
