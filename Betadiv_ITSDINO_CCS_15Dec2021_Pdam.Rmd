@@ -1,0 +1,715 @@
+---
+title: Beta diversity ITS2 DINO analyses for Pocillopora species across the Indo-Pacific, 1 Nov 2021
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+rm(list = ls())
+library(tidyr)
+library(purrr)
+library(dplyr)
+library(metagMisc)
+library(kableExtra)
+library(reshape2)
+library(stringr)
+library(tidyverse)
+library(phyloseq)
+library(magrittr)
+library(metagMisc)
+library(randomForest)
+library(knitr)
+library(seqinr)
+library(ggplot2)
+library(gridExtra)
+library(vegan)
+library(DESeq2)
+library(picante)
+library(remotes)
+library(ggrepel)
+library(igraph)
+library(ellipse)
+library(dplyr)
+library(indicspecies)
+library(yhat)
+library("dunn.test")
+library(metagenomeSeq)
+library(phyloseq)
+```
+
+```{r}
+## Remember to setwd to where rds files are found
+##setwd("~/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv")
+
+##Read rds file generated from DADA2
+ps <- readRDS("/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv/symITSps_may2021.rds")
+ps 
+```
+
+```{r}
+taxa_names(ps) <- paste0("asv", seq(ntaxa(ps))) 
+# explicitly rename taxas to asvs
+
+otu <- otu_table(ps)
+tre <- phy_tree(ps)
+sam <- sample_data(ps)
+```
+
+```{r}
+##Taxa import, below is for the NCBI search, which was as follows on our Compute Canada clusters:
+
+###blastn \
+###-query uniqueSeqs_F-asv.fasta \
+###-db nt \
+###-out SymPortal_NCBIcrossref_Fb5.csv \
+###-evalue 1e-5 \
+###-outfmt "6 qseqid sseqid sscinames scomnames sskingdoms stitle qstart qend mismatch evalue length" \
+###-max_target_seqs 5
+
+## For NCBI, I manually looked through the generated table to assign clade and type level identifications. 
+
+##I also used SymPortal for taxonomic assignment, but this did not result in ITS clades being grouped together. This was run using the following: 
+
+###vsearch --usearch_global uniqueSeqs_DINO_Stewart.fasta --db refSeqDB.fa --blast6out DINOSt_taxa.txt --id 0.6 --output_no_hits --db refSeqDB.fa nomatch_DINOST.txt}
+```
+
+```{r}
+taxtable<-read.csv("/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv/DINO_NCBI_26feb2021_noNs.csv")
+summary(taxtable)
+
+##This CSVs has all N sequences removed, as not informative 
+```
+
+```{r}
+## taxonomy table into matrix 
+taxmat<-as.matrix(taxtable[,2:3])
+rownames(taxmat)<-taxtable$ASV
+```
+
+```{r}
+
+##Combine the taxonomy matrix and the otu_table (otus) into a phyloseq object
+
+TAX = tax_table(taxmat)
+
+## Check if any duplicated row names
+
+duplicated(TAX)
+
+taxa_are_rows(TAX)
+
+any(duplicated(rownames(TAX)))
+
+which(duplicated(rownames(TAX)))
+
+## If no duplicated row names: 
+
+ps_tax = phyloseq(otu, TAX, sam, tre)
+
+ps_tax
+```
+
+
+
+```{r}
+
+# Compare phyloseq's raw and now SymPortal amended ps's 
+ps_tax
+ps
+
+## Only 52.6% of taxa kept from ps to ps_tax
+
+```
+
+```{r}
+
+#Remove samples less 1000 reads
+
+ps1 = prune_samples(sample_sums(ps_tax) > 1000, ps_tax)
+ps1
+
+#Remove taxa not seen more than 1 times in at least 5% of the samples
+
+ps2 = filter_taxa(ps1, function(x) sum(x > 1) > (0.05*length(x)), TRUE)
+ps2
+
+# keep only taxa that were observed at least twice
+ps3 = prune_taxa(taxa_sums(ps2) >= 2, ps2)
+ps3 
+
+# remove taxonomy samples that were Ns
+
+ps4 = subset_samples(ps3, Spec != "P_spp")
+
+## Remove Fr Poly as ASVs all = 0
+
+ps5 = subset_samples(ps4, Loc != "FrenPoly") 
+```
+
+```{r}
+## Assign ASV numeric values to replace sequences
+##n_seqs <- seq(ntaxa(ps5))
+##len_n_seqs <- nchar(max(n_seqs))
+##taxa_seqs <- taxa_names(ps5)
+##asvs <- paste("ASV", formatC(n_seqs,
+##width = len_n_seqs,
+##flag = "0"), sep = "_")
+##taxa_names(ps5) <- asvs
+
+## remove samples with otu = 0 
+ps6 <- prune_samples(sample_sums(ps5) >= 1, ps5)
+ps6
+```
+
+```{r}
+
+##dfASV_seq <- data.frame(asv=asvs, seq=taxa_seqs, stringsAsFactors = FALSE)
+##write.csv(dfASV_seq, file="dfASV_seq.csv", row.names = FALSE)
+##write.fasta(as.list(taxa_seqs), asvs, "asv_seq.fasta", open = "w", nbchar = 60, as.string =TRUE)
+
+##saveRDS(dfASV_seq, file="dfASV_Seq.rds")
+```
+
+```{r}
+## Remove singletons
+ps6_filt <- filter_taxa(ps6, function(x) sum(x > 1) > 1, TRUE)
+ps6_filt
+```
+
+```{r}
+
+## CSS transformation
+
+ps6_filt_css <- phyloseq_transform_css(ps6_filt, norm = TRUE, log = FALSE)
+ps_normalized <- list()
+normalization <- 'css'
+ps_normalized[[normalization]] <- ps6_filt_css
+ps_normalized[[normalization]]
+
+colnames(sample_data(ps6_filt_css))
+saveRDS(ps6_filt_css, file="ps6_filt_css.rds")
+
+```
+
+```{r}
+
+## Set random seed for reproducibility 
+
+set.seed(8765)
+
+##Alpha div
+
+#Remove Panama
+ps7 <- subset_samples(ps6_filt_css, Loc != "Panam") 
+
+#Remove P. me
+ps8 <- subset_samples(ps7, Spec != "P_me") 
+
+ps9 = subset_samples(ps8, Spec == "P_dam")
+
+ps10 = subset_samples(ps9, Loc != "Aus_GBR_Heron") 
+ps11 = subset_samples(ps10, Season != "Summer") 
+ps12 = subset_samples(ps11, Tbl_bin != "Bleaching") 
+ps13 = subset_samples(ps12, Loc != "NewCal") 
+
+ps13
+colnames(sample_data(ps13))
+head(sample_data(ps13))
+```
+```{r}
+Locs <- c("Djib", "Oman", "Aus_GBR_Heron", "NewCal","Taiwan", "Moorea", "Tahiti", "Tahaa", "Raia")
+
+DHW <-  c("N", "Mod")
+
+T_bl <- c("Recent", "Long")
+
+Season <- c("Winter", "Spring")
+
+S_region <- c("IndianOc", "Taiwan", "Aus", "NewCal", "FrPoly")
+  
+L_region <- c("IndianOc", "WPac", "NPac", "EPac")
+
+```
+
+
+```{r}
+##Dot plots
+
+##Dot plots ITS type
+
+library(ggplot2)
+
+## Get relative abundances
+
+ps.rel = transform_sample_counts(ps13, function(x) x/sum(x)*100)
+
+# agglomerate taxa
+glom <- tax_glom(ps.rel, taxrank = "ITStype", NArm = FALSE)
+ps.melt <- psmelt(glom)
+
+# change to character for easy-adjusted level
+ps.melt$ITStype <- as.character(ps.melt$ITStype)
+
+ps.melt <- ps.melt %>%
+  group_by(Loc, ITStype) %>%
+  mutate(median=median(Abundance))
+```
+
+```{r}
+
+##ITS type across locations
+
+ITStype_loc <- ggplot(ps.melt, aes(x = Loc, y = ITStype, color = ITStype)) + geom_point(aes(size = Abundance)) + scale_colour_hue(guide = "none") +  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"))
+
+ITStype_loc 
+
+ggsave("ITStype_loc_pdam_16Sept2021.pdf")
+
+
+```
+
+
+```{r}
+##ITS type across time mass bleaching
+
+ITStype_blc <- ggplot(ps.melt, aes(x = Tbl_bin, y = ITStype, color = ITStype)) + geom_point(aes(size = Abundance)) + scale_colour_hue(guide = "none") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black")) 
+
+ITStype_blc
+ggsave("ITStype_blc_pdam_16Sep2021.pdf")
+```
+
+```{r}
+
+#Set random seed for reproducibility, calculate distance metrics 
+set.seed(423542)
+
+bray.dist = phyloseq::distance(ps13, "bray")
+jacc.dist = phyloseq::distance(ps13, "jaccard")
+wuni.dist = phyloseq::distance(ps13, "wunifrac")
+```
+
+```{r}
+#Move into Vegan
+asv_css <- t(otu_table(ps13))
+asv_css_hell <- decostand((asv_css), "hell") #not sure we are going to do this.
+meta = as(sample_data(ps13), "data.frame")
+```
+
+```{r}
+perm_css = adonis(asv_css ~ S_region/Loc + SST_a + Tbl_bin, meta) #uses bray internally.
+perm_css$aov.tab
+```
+
+```{r}
+perm_css2 = adonis2(asv_css ~ S_region/Loc + SST_a + Tbl_bin,  meta, method = "bray", sqrt.dist = FALSE, by = "terms") 
+perm_css2
+
+#Remove loc as know may be masking abiotic differences, as per Mantel test showing a distance between locations increase, dissimilarity increases
+perm_css3 = adonis2(asv_css ~ SST_a + Tbl_bin,  meta, method = "bray", sqrt.dist = FALSE, by = "terms") 
+perm_css3
+```
+
+```{r}
+# Pairwise differences - locations
+
+library(pairwiseAdonis)
+library(xlsx)
+library(data.table)
+
+Pairwise_loc <- pairwise.adonis2(asv_css ~ Loc, data = meta, sim.method = "bray",  p.adjust.m = "BH",
+  permutations = 999)
+
+Pairwise_loc
+
+write.xlsx(Pairwise_loc, file = "Pairwiseloc_1Nov2021.xlsx")
+
+
+Pairwise_reg <- pairwise.adonis2(asv_css ~ S_region, data = meta, sim.method = "bray",  p.adjust.m = "BH",
+  permutations = 999)
+
+Pairwise_reg 
+
+write.xlsx(Pairwise_reg, file = "PairwiseReg_1Nov2021.xlsx")
+```
+
+```{r}
+#Pairwise differences - SST
+##pairwise.adonis2(asv_css ~ SST_a, data = meta, sim.method = "bray",  p.adjust.m = "BH",
+  ##permutations = 999)
+```
+
+```{r}
+#Pairwise differences - time since last mass bleaching event
+Pairwise_bleach <- pairwise.adonis2(asv_css ~ Tbl_bin, data = meta, sim.method = "bray",  p.adjust.m = "BH", permutations = 999)
+
+Pairwise_bleach
+
+write.xlsx(Pairwise_bleach, file = "Pairwisebleach_1Nov2021.xlsx")
+```
+
+
+```{r}
+ano = anosim(asv_css, meta$Loc, distance = "bray", permutations = 9999)
+ano
+
+ano1 = anosim(asv_css, meta$Season, distance = "bray", permutations = 9999)
+ano1
+
+ano2 = anosim(asv_css, meta$Tbl_bin, distance = "bray", permutations = 9999)
+ano2 
+
+ano3 = anosim(asv_css, meta$DHW_cat, distance = "bray", permutations = 9999)
+ano3 
+
+ano4 = anosim(asv_css, meta$SST_a, distance = "bray", permutations = 9999)
+ano4
+```
+
+
+```{r}
+
+#BC and NMDs
+MDSbray <- ordinate(ps13, "NMDS", "bray", autotransform = FALSE, parallel = 48) 
+
+```
+
+```{r}
+Locs <- c("Djib", "Oman","Taiwan", "Moorea", "Tahiti", "Tahaa", "Raia")
+MDSbray$Loc <- factor(MDSbray$Loc, levels = c("Djib", "Oman","Taiwan", "Moorea", "Tahiti", "Tahaa", "Raia")) 
+
+DHW <-  c("N", "Mod")
+MDSbray$DHW_cat <- factor(MDSbray$DHW_cat, levels = c("N", "Mod")) 
+
+T_bl <- c("Recent", "Long")
+MDSbray$Tbl_bin <- factor(MDSbray$Tbl_bin, levels = c("Recent", "Long")) 
+
+Season <- c("Winter", "Spring")
+MDSbray$Season <- factor(MDSbray$Season, levels = c("Winter", "Spring")) 
+
+S_region <- c("IndianOc", "Aus", "NewCal", "FrPoly")
+MDSbray$S_region <- factor(MDSbray$S_region, levels = c("IndianOc", "Aus", "NewCal", "FrPoly")) 
+  
+L_region <- c("IndianOc", "WPac", "NPac", "EPac")
+MDSbray$L_region <- factor(MDSbray$L_region, levels = c("IndianOc", "WPac", "NPac", "EPac")) 
+
+```
+
+```{r}
+
+NMDSplot_loc <- plot_ordination(ps13, MDSbray, type="samples", color="Loc", shape = "S_region") +
+  theme_bw() +
+  stat_ellipse() + 
+  ggtitle("BrayMDS_Loc_pdam")
+
+summary (NMDSplot_loc)
+
+NMDSplot_loc
+ggsave("NMDSplot_loc_pdam_1Nov2021.pdf")
+```
+
+
+```{r}
+
+# Tbleach
+
+NMDSplot_Tbleach <- plot_ordination(ps13, MDSbray, type="samples", color="Tbl_bin") +
+  theme_bw() +
+  stat_ellipse() + 
+  ggtitle("BrayMDS_Tbleach")
+
+NMDSplot_Tbleach
+ggsave("NMDSplot_Tbleach_pdam_1Nov2021.pdf")
+
+```
+
+```{r}
+## Test dispersion/homoscedascity 
+
+##by location
+g_mod_loc <- with(meta, betadisper(bray.dist, Loc))
+g_mod_loc
+plot(g_mod_loc)
+boxplot(g_mod_loc,las=2)
+anova(g_mod_loc)
+
+##by season
+g_mod_sea <- with(meta, betadisper(bray.dist, Season))
+g_mod_sea
+plot(g_mod_sea)
+boxplot(g_mod_sea,las=2)
+anova(g_mod_sea)
+
+##by tbleaching
+g_mod_bleach <- with(meta, betadisper(bray.dist, Tbl_bin))
+g_mod_bleach
+plot(g_mod_bleach)
+boxplot(g_mod_bleach,las=2)
+anova(g_mod_bleach)
+
+##by DHW
+g_mod_DHW <- with(meta, betadisper(bray.dist, DHW_cat))
+g_mod_DHW
+plot(g_mod_DHW)
+boxplot(g_mod_DHW,las=2)
+anova(g_mod_DHW)
+
+#by S_region
+g_mod_Sregion <- with(meta, betadisper(bray.dist, S_region))
+g_mod_Sregion
+plot(g_mod_Sregion)
+boxplot(g_mod_Sregion,las=2)
+anova(g_mod_Sregion)
+
+##by L_region
+g_mod_Lregion <- with(meta, betadisper(bray.dist, L_region))
+g_mod_Lregion
+plot(g_mod_Lregion)
+boxplot(g_mod_Lregion,las=2)
+anova(g_mod_Lregion)
+
+
+```
+
+
+```{r}
+##Mantel test 
+##Set random seed for reproducibility
+set.seed(5462)
+
+library(geosphere)
+
+#longitude and latitude 
+sam_ps13 <- sample_data(ps13)
+sam_ps13
+
+geo = data.frame(sam_ps13$Coord_Y, sam_ps13$Coord_X)
+geo
+```
+
+```{r}
+
+#geographic data frame - haversine distance 
+d.geo = distm(geo, fun = distVincentyEllipsoid)
+dist.geo = as.dist(d.geo)
+```
+
+```{r}
+##Bray-Curtis 
+bray.dist = phyloseq::distance(ps13, "bray")
+
+```
+
+```{r}
+#bray vs geographic 
+bray_geo  = mantel(bray.dist, dist.geo, method = "spearman", permutations = 9999, na.rm = TRUE)
+bray_geo
+```
+
+```{r}
+
+#Bray vs environ 
+
+temp = sam_ps13$SST_a
+##bleach = sam_ps13$Tbl_bin
+
+#environmental vectors - euclidean distance
+dist.temp = dist(temp, method = "euclidean")
+##dist.bleach = dist(bleach, method = "euclidean")
+
+bray_temp  = mantel(bray.dist, dist.temp, method = "spearman", permutations = 9999, na.rm = TRUE)
+#bray_bleach  = mantel(bray.dist, dist.bleach, method = "spearman", permutations = 9999, na.rm = TRUE)
+```
+
+```{r}
+##summary results
+
+bray_temp
+#bray_Bleach
+```
+
+```{r}
+##Prepare for network analysis; plot only top20OTU as too complicated to visualize with full dataset
+
+##Set random seed for reproducibility
+set.seed(711L)
+
+#Sort the OTUs by abundance and pick the top 20
+top20OTU.names = names(sort(taxa_sums(ps13), TRUE)[1:20])
+
+#Cut down the physeq.tree data to only the top 20 
+top20OTU = prune_taxa(top20OTU.names, ps13)
+
+top20OTU
+```
+
+```{r}
+
+#Default settings as a trial
+plot_net(top20OTU, maxdist = 0.4, point_label = "Loc")
+
+##Visualize species and location
+plot_net(top20OTU, maxdist = 0.4, color = "Loc") 
+
+## Now explicitly include Bray-Curtis distances 
+
+ig <- make_network(top20OTU, dist.fun="bray", max.dist=0.3)
+ig2 <- plot_network(ig, top20OTU, color="Loc", shape = "S_region", line_weight=0.2, label=NULL) +  scale_x_discrete(limits = Locs) 
+par(mar=c(1,1,1,1))
+ig2
+ggsave("network_pdam_16Sep2021.pdf", width = 30, height = 20, dpi = 300)
+```
+
+
+```{r}
+##Indicator Species Analysis
+
+set.seed(15673)
+library(xlsx)
+library(data.table)
+
+```
+
+```{r}
+inv_loc = multipatt(asv_css, meta$Loc, func = "IndVal.g", control = how(nperm=999))
+summary(inv_loc)
+indisp.sign<-as.data.table(inv_loc$sign, keep.rownames=TRUE)
+#add adjusted p-value
+indisp.sign[ ,p.value.bh:=p.adjust(p.value, method="BH")]
+#now can select only the indicators with adjusted significant p-values
+
+IndVal_loc = indisp.sign[p.value.bh<=0.05, ]
+IndVal_loc
+
+write.xlsx(IndVal_loc, file = "IndVal_loc_1Nov2021.xlsx")
+```
+
+```{r}
+inv_blc = multipatt(asv_css, meta$Tbl_bin, func = "IndVal.g", control = how(nperm=999))
+summary(inv_blc)
+indisp.sign<-as.data.table(inv_blc$sign, keep.rownames=TRUE)
+#add adjusted p-value
+indisp.sign[ ,p.value.bh:=p.adjust(p.value, method="BH")]
+#now can select only the indicators with adjusted significant p-values
+
+IndVal_blc = indisp.sign[p.value.bh<=0.05, ]
+IndVal_blc
+
+write.xlsx(IndVal_blc, file = "IndVal_blc_1Nov2021.xlsx")
+```
+
+```{r}
+inv_sregion = multipatt(asv_css, meta$S_region, func = "IndVal.g", control = how(nperm=999))
+summary(inv_sregion)
+indisp.sign<-as.data.table(inv_sregion$sign, keep.rownames=TRUE)
+#add adjusted p-value
+indisp.sign[ ,p.value.bh:=p.adjust(p.value, method="BH")]
+#now can select only the indicators with adjusted significant p-values
+IndVal_sregion = indisp.sign[p.value.bh<=0.05, ]
+IndVal_sregion
+
+write.xlsx(IndVal_sregion, file = "IndVal_sregion_1Nov2021.xlsx")
+```
+
+```{r}
+##GLM by clade
+
+ps13_CladeA = subset_taxa(ps13, ITSclade=="A")
+ps13_CladeC = subset_taxa(ps13, ITSclade=="C")
+ps13_CladeD = subset_taxa(ps13, ITSclade=="D")
+```
+
+```{r}
+set.seed(199932)
+
+#Clade A
+ps13_CladeA_n2 = prune_samples(sample_sums(ps13_CladeA) >= 1, ps13_CladeA)
+asv_css_A <- t(otu_table(ps13_CladeA_n2))
+meta_A = as(sample_data(ps13_CladeA_n2), "data.frame")
+
+#Clade C
+asv_css_C <- t(otu_table(ps13_CladeC))
+meta_C = as(sample_data(ps13_CladeC), "data.frame")
+
+#Clade D
+asv_css_D <- t(otu_table(ps13_CladeD))
+meta_D = as(sample_data(ps13_CladeD), "data.frame")
+```
+
+```{r}
+perm_css_A = adonis2(asv_css_A ~ S_region/Loc + SST_a + Tbl_bin, meta_A, method = "bray", sqrt.dist = FALSE, by = "terms", na.action = na.omit) 
+perm_css_A
+```
+
+```{r}
+perm_css_C = adonis2(asv_css_C ~ S_region/Loc + SST_a + Tbl_bin,  meta_C, method = "bray", sqrt.dist = FALSE, by = "terms") 
+perm_css_C
+```
+
+```{r}
+perm_css_D = adonis2(asv_css_D ~ S_region/Loc + SST_a + Tbl_bin,  meta_D, method = "bray", sqrt.dist = FALSE, by = "terms") 
+perm_css_D
+```
+```{r}
+# Pairwise differences - Clade A
+library(pairwiseAdonis)
+
+CladeA_Loc <- pairwise.adonis2(asv_css_A ~ Loc, data = meta_A, sim.method = "bray",  p.adjust.m = "BH", permutations = 999)
+
+CladeA_Loc
+
+CladeA_Reg <- pairwise.adonis2(asv_css_A ~ S_region, data = meta_A, sim.method = "bray",  p.adjust.m = "BH", permutations = 999)
+
+write.xlsx(CladeA_Loc, file = "CladeA_Loc_1Nov2021.xlsx")
+
+write.xlsx(CladeA_Reg, file = "CladeA_Reg_1Nov2021.xlsx")
+```
+
+```{r}
+# Pairwise differences - Clade C
+library(pairwiseAdonis)
+
+CladeC_Loc <- pairwise.adonis2(asv_css_C ~ Loc, data = meta_C, sim.method = "bray",  p.adjust.m = "BH",
+  permutations = 999)
+
+CladeC_Loc
+
+CladeC_Reg <- pairwise.adonis2(asv_css_C ~ S_region, data = meta_C, sim.method = "bray",  p.adjust.m = "BH", permutations = 999)
+
+CladeC_Reg
+
+write.xlsx(CladeC_Loc, file = "CladeC_Loc_1Nov2021.xlsx")
+
+write.xlsx(CladeC_Reg, file = "CladeC_Reg_1Nov2021.xlsx")
+```
+
+```{r}
+# Pairwise differences - Clade D
+
+CladeD_Loc <- pairwise.adonis2(asv_css_D ~ Loc, data = meta_D, sim.method = "bray",  p.adjust.m = "BH",
+  permutations = 999)
+
+CladeD_Loc
+
+CladeD_Reg <- pairwise.adonis2(asv_css_D ~ S_region, data = meta_D, sim.method = "bray",  p.adjust.m = "BH",permutations = 999)
+
+CladeD_Reg
+
+
+CladeD_Blc <- pairwise.adonis2(asv_css_D ~ Tbl_bin, data = meta_D, sim.method = "bray",  p.adjust.m = "BH",
+  permutations = 999)
+
+CladeD_Blc
+
+write.xlsx(CladeD_Loc, file = "CladeD_Loc_1Nov2021.xlsx")
+
+write.xlsx(CladeD_Reg, file = "CladeD_Reg_1Nov2021.xlsx")
+
+write.xlsx(CladeD_Blc, file = "CladeD_Blc_1Nov2021.xlsx")
+```
+
+

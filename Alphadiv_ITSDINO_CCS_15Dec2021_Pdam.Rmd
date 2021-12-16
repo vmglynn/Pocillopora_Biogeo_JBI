@@ -1,0 +1,691 @@
+---
+title: Alpha diversity ITS2 DINO analyses for Pocillopora species across the Indo-Pacific, 1 Nov 2021
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+rm(list = ls())
+library(tidyr)
+library(purrr)
+library(dplyr)
+library(metagMisc)
+library(kableExtra)
+library(reshape2)
+library(stringr)
+library(tidyverse)
+library(phyloseq)
+library(magrittr)
+library(metagMisc)
+library(randomForest)
+library(knitr)
+library(seqinr)
+library(phyloseq)
+library(ggplot2)
+library(gridExtra)
+library(vegan)
+library(DESeq2)
+library(phyloseq); packageVersion("phyloseq")
+library(ggplot2); packageVersion("ggplot2")
+library(picante)
+library(ggrepel)
+library(igraph)
+library(plotly)
+library(ggtree)
+library(ellipse)
+library(dplyr)
+library(indicspecies)
+library(yhat)
+library("dunn.test"); packageVersion("dunn.test")
+library(metagenomeSeq)
+library("multcompView")
+library(stats)
+library(emmeans)
+library(dbstats)
+library(geodist)
+library(radiant.data)
+```
+
+```{r}
+## Remember to setwd to where rds files are found
+##setwd("~/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv")
+
+##Read rds file generated from DADA2
+ps <- readRDS("/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv/symITSps_may2021.rds")
+ps 
+```
+
+```{r}
+taxa_names(ps) <- paste0("asv", seq(ntaxa(ps))) 
+# explicitly rename taxas to asvs
+
+otu <- otu_table(ps)
+tre <- phy_tree(ps)
+sam <- sample_data(ps)
+```
+
+```{r}
+## setwd("~/Documents/MS_PocBiogeo_UPDATE-March2021")
+taxtable<-read.csv("/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv/DINO_NCBI_26feb2021_noNs.csv")
+summary(taxtable)
+
+##This CSVs has all N sequences removed, as not informative 
+```
+
+```{r}
+## taxonomy table into matrix 
+taxmat<-as.matrix(taxtable[,2:3])
+rownames(taxmat)<-taxtable$ASV
+```
+
+```{r}
+
+##Combine the taxonomy matrix and the otu_table (otus) into a phyloseq object
+
+TAX = tax_table(taxmat)
+
+## Check if any duplicated row names
+
+duplicated(TAX)
+
+taxa_are_rows(TAX)
+
+any(duplicated(rownames(TAX)))
+
+which(duplicated(rownames(TAX)))
+
+## If no duplicated row names: 
+
+ps_tax = phyloseq(otu, TAX, sam, tre)
+
+ps_tax
+```
+
+```{r}
+
+# Compare phyloseq's raw and now SymPortal amended ps's 
+ps_tax
+ps
+
+## Only 8% of taxa kept from ps to ps_tax
+
+```
+
+```{r}
+
+#Remove samples less 1000 reads
+
+ps1 = prune_samples(sample_sums(ps_tax) > 1000, ps_tax)
+ps1
+
+#Remove taxa not seen more than 1 times in at least 5% of the samples
+
+ps2 = filter_taxa(ps1, function(x) sum(x > 1) > (0.05*length(x)), TRUE)
+ps2
+
+# keep only taxa that were observed at least twice
+ps3 = prune_taxa(taxa_sums(ps2) >= 2, ps2)
+ps3 
+
+# remove taxonomy samples that were Ns
+
+ps4 = subset_samples(ps3, Spec != "P_spp")
+
+## Remove Fr Poly as ASVs all = 0
+
+ps5 = subset_samples(ps4, Loc != "FrenPoly") 
+```
+
+```{r}
+## Assign ASV numeric values to replace sequences
+##n_seqs <- seq(ntaxa(ps5))
+##len_n_seqs <- nchar(max(n_seqs))
+##taxa_seqs <- taxa_names(ps5)
+##asvs <- paste("ASV", formatC(n_seqs,
+##width = len_n_seqs,
+##flag = "0"), sep = "_")
+##taxa_names(ps5) <- asvs
+
+## remove samples with otu = 0 
+ps6 <- prune_samples(sample_sums(ps5) >= 1, ps5)
+ps6
+```
+
+```{r}
+
+##dfASV_seq <- data.frame(asv=asvs, seq=taxa_seqs, stringsAsFactors = FALSE)
+##write.csv(dfASV_seq, file="dfASV_seq.csv", row.names = FALSE)
+##write.fasta(as.list(taxa_seqs), asvs, "asv_seq.fasta", open = "w", nbchar = 60, as.string =TRUE)
+
+##saveRDS(dfASV_seq, file="dfASV_Seq.rds")
+```
+
+```{r}
+## Remove singletons
+ps6_filt <- filter_taxa(ps6, function(x) sum(x > 1) > 1, TRUE)
+ps6_filt
+```
+
+```{r}
+
+## CSS transformation
+
+ps6_filt_css <- phyloseq_transform_css(ps6_filt, norm = TRUE, log = FALSE)
+ps_normalized <- list()
+normalization <- 'css'
+ps_normalized[[normalization]] <- ps6_filt_css
+ps_normalized[[normalization]]
+
+colnames(sample_data(ps6_filt_css))
+saveRDS(ps6_filt_css, file="ps6_filt_css.rds")
+
+```
+
+```{r} 
+
+##Binary transformation, did not use
+
+ps_filt_binary <- ps6_filt_css
+otups2 <- otu_table(ps_filt_binary)
+
+# if >= 1, then transform value to 1
+otups2[otups2 >= 1] <- 1
+otu_table(ps_filt_binary) <- otups2
+input_data <- t(as(otu_table(ps_filt_binary), "matrix"))
+sampleData <- sample_data(ps_filt_binary)
+all_data <- merge(sampleData, input_data, by = 0)
+rownames(all_data) <- all_data$Row.names
+all_data <- subset(all_data, select = -c(Row.names))
+all_nonNA_data <- all_data[,colSums(is.na(all_data))<nrow(all_data)]
+all_nonNA_data$yrSeason <- as.factor(all_nonNA_data$Loc)
+kable(head(all_nonNA_data[,c(1:8)]))
+```
+
+```{r}
+tax_info <- as.data.frame(tax_table(ps_filt_binary))
+saveRDS(ps_filt_binary, file="ps_filt_binary.rds")
+normalization <- 'binary'
+
+ps_normalized[[normalization]] <- ps_filt_binary
+ps_normalized[[normalization]]
+
+saveRDS(ps_normalized, file="ps_normalized.rds")
+
+tax_info <- as.data.frame(tax_table(ps6_filt_css))
+write.csv(tax_info, file="tax_info.csv")
+```
+
+
+```{r}
+
+## Set random seed for reproducibility 
+
+set.seed(8765)
+
+##Alpha div
+
+#Remove Panama
+ps7 <- subset_samples(ps6_filt_css, Loc != "Panam") 
+
+#Remove P. me
+ps8 <- subset_samples(ps7, Spec != "P_me") 
+
+#Keep only P.dam
+ps9 = subset_samples(ps8, Spec == "P_dam")
+
+ps9
+colnames(sample_data(ps9))
+head(sample_data(ps9))
+```
+```{r}
+#Move into Vegan
+set.seed(423542)
+asv_css <- t(otu_table(ps9))
+asv_css_hell <- decostand((asv_css), "hell") #not sure we are going to do this.
+meta = as(sample_data(ps9), "data.frame")
+```
+
+```{r}
+Richness <- specnumber(asv_css) #calculates richness from css
+Shannon <- vegan::diversity(asv_css, index = "shannon")
+InvSimpson <- vegan::diversity(asv_css, index = "invsimpson") #inverted simpson
+#Beta <- vegdist(asv_css, "bray") #beta dissimilarity
+alpha_vegan <- cbind(Richness, Shannon, InvSimpson, meta)
+alpha_vegan <- rownames_to_column(alpha_vegan, var = "id") %>% as_tibble()
+head(alpha_vegan)
+```
+
+```{r}
+shapiro.test(alpha_vegan$Richness)
+shapiro.test(alpha_vegan$Shannon)
+shapiro.test(alpha_vegan$InvSimpson)
+```
+
+```{r}
+##Sean's approach 
+
+#Step 1: run regular LM models
+
+mod.alpha <- lm(Richness ~ Loc + Tbl_bin + SST_a, data = alpha_vegan)
+mod.even <- lm(Shannon ~  Loc  + Tbl_bin  + SST_a, data = alpha_vegan)
+mod.inv <- lm(InvSimpson ~  Loc  + Tbl_bin  + SST_a, data = alpha_vegan)
+```
+
+```{r}
+##transformation as slight right-skew
+mod.inv2 <- lm(log(InvSimpson) ~ Loc + Tbl_bin  + SST_a, data = alpha_vegan)
+mod.inv3 <- lm(sqrt(InvSimpson) ~  Loc  + Tbl_bin  + SST_a, data = alpha_vegan)
+```
+
+```{r}
+##Nested models with interaction effects, skew accounted for for InvSimpson
+###Removed DHW as only one location have non-zero DHW experienced 
+###Nest Location within region
+###Expect seasons to have a given range of SST_a, so have an interaction effect to reflect such 
+
+mod.alpha.nest <- lm(Richness ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan)
+mod.eve.nest <- lm(Shannon ~ S_region/Loc + SST_a + Tbl_bin , data = alpha_vegan)
+mod.inv.nest <- lm(log(InvSimpson) ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan)
+```
+
+```{r}
+##Compare AIC scores as sanity check
+library(stats)
+#Alpha 
+extractAIC(mod.alpha) 
+extractAIC(mod.alpha.nest) 
+```
+
+```{r}
+#Even
+extractAIC(mod.even)
+extractAIC(mod.eve.nest) 
+```
+
+```{r}
+#InvSimp
+extractAIC(mod.inv) 
+##extractAIC(mod.inv2) 
+##extractAIC(mod.inv3)
+extractAIC(mod.inv.nest) 
+```
+
+
+```{r}
+##Step 2: standardize residuals
+
+mod.alpha.stdres = rstandard(mod.alpha)
+mod.even.stdres = rstandard(mod.even)
+mod.inv.stdres = rstandard(mod.inv)
+mod.inv2.stdres = rstandard(mod.inv2)
+mod.alpha.nest.stdres = rstandard(mod.alpha.nest)
+mod.eve.nest.stdres = rstandard(mod.eve.nest)
+mod.inv.nest.stdres = rstandard(mod.inv.nest) 
+```
+
+```{r}
+boxplot(mod.alpha.stdres)
+
+boxplot(mod.even.stdres)
+
+boxplot(mod.inv.stdres)
+
+boxplot(mod.inv2.stdres)
+
+##Nested and interaction effect 
+
+boxplot(mod.alpha.nest.stdres)
+
+boxplot(mod.eve.nest.stdres)
+
+boxplot(mod.inv.nest.stdres)
+```
+
+```{r}
+#Step 3: Boxplot standardized residual, by location
+
+boxplot(mod.alpha.stdres ~ meta$Loc) 
+
+boxplot(mod.even.stdres ~ meta$Loc)
+
+boxplot(mod.inv.stdres ~ meta$Loc)
+
+boxplot(mod.inv2.stdres ~ meta$Loc)
+
+boxplot(mod.alpha.nest.stdres ~ meta$Loc)
+
+boxplot(mod.eve.nest.stdres ~ meta$Loc)
+
+boxplot(mod.inv.nest.stdres ~ meta$Loc)
+```
+
+```{r}
+ggplot(meta, aes(x = Loc, y = mod.alpha.stdres)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+ggplot(meta, aes(x = Loc, y = mod.even.stdres)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+ggplot(meta, aes(x = Loc, y = mod.inv.stdres)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+ggplot(meta, aes(x = Loc, y = mod.inv2.stdres)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+
+ggplot(meta, aes(x = Loc, y = mod.alpha.nest.stdres)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+ggplot(meta, aes(x = Loc, y = mod.eve.nest.stdres)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+ggplot(meta, aes(x = Loc, y = mod.inv.nest.stdres)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+```
+
+```{r}
+##qqplot for ref
+plot(mod.alpha.nest)
+```
+
+
+```{r}
+summary(mod.alpha, cor=T)  
+summary(mod.even, cor=T) 
+summary(mod.inv2, cor=T)
+```
+```{r}
+summary(mod.alpha.nest, cor=T)
+summary(mod.eve.nest, cor=T)
+summary(mod.inv.nest, cor=T)
+```
+
+```{r}
+#Step 3.1: Check if missing cells for some interactions 
+
+coef(lm(Richness ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan))
+```
+```{r}
+coef(lm(Richness ~ Loc + SST_a + Tbl_bin, data = alpha_vegan))
+```
+```{r}
+coef(lm(Richness ~ S_region + SST_a + Tbl_bin, data = alpha_vegan))
+```
+
+```{r}
+coef(lm(Shannon ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan))
+```
+```{r}
+coef(lm(log(InvSimpson) ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan))
+```
+
+```{r}
+#Step 3.2: Drop interactions = NA
+
+dd1 <- transform(na.omit(alpha_vegan))
+```
+
+```{r}
+library(nlme)
+
+#Step 4: build gls
+
+rich_gls <- gls(Richness ~ S_region + SST_a + Tbl_bin, data = alpha_vegan)
+
+rich_gls_nest <- gls(Richness ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan, na.action = "na.omit", weights = varIdent(form = ~ 1|Loc), control = list(singular.ok = TRUE))
+```
+
+```{r}
+
+##Need to manually specify "nesting" as interaction effects
+##rich_gls <- gls(Richness ~ S_region + S_region$IndianOc:Loc$Oman + S_region$IndianOc:Loc$Djib + S_region$FrPoly:Loc$Tahiti + S_region$FrPoly:Loc$Tahaa +  S_region$FrPoly:Loc$Raia +  S_region$FrPoly:Loc$Moorea + SST_a + Tbl_bin, data = alpha_vegan)
+
+summary(rich_gls) 
+plot(rich_gls)
+
+##Nested
+summary(rich_gls_nest) 
+plot(rich_gls_nest) ##st residual dotplot
+plot(rich_gls_nest, Loc ~ resid(.)) ##reg residual boxplot
+
+##Wt per location
+weight.per.loc <- attr(rich_gls_nest$model$varStruct, "weights")
+weight.per.loc
+
+##Boxplots st residual jitterpoints
+e.gls.Loc <- resid(rich_gls_nest, type = "normalized")
+
+boxplot(e.gls.Loc~alpha_vegan$Loc)
+
+ggplot(meta, aes(x = Loc, y = e.gls.Loc)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+qqnorm(e.gls.Loc,col="firebrick",abline = c(0,1))
+```
+```{r}
+#Step 4.1: remove locations bi/trimodal distributions
+##As QQ plot with regular lm and gls above do not differ significantly, the issue may lie in locations with multimodality. This is a comprimise to be made by removing these locations, i.e. less data/locations, but normality assumptions better met. 
+
+
+#Move into Vegan
+set.seed(423542)
+
+
+ps9 = subset_samples(ps8, Spec == "P_dam")
+ps10 = subset_samples(ps9, Loc != "Aus_GBR_Heron") 
+ps11 = subset_samples(ps10, Season != "Summer") 
+ps12 = subset_samples(ps11, Tbl_bin != "Bleaching") 
+ps13 = subset_samples(ps12, Loc != "NewCal") 
+
+colnames(sample_data(ps13))
+
+asv_css2 <- t(otu_table(ps13))
+meta2 = as(sample_data(ps13), "data.frame")
+
+Richness2 <- specnumber(asv_css2) #calculates richness from css
+Shannon2 <- vegan::diversity(asv_css2, index = "shannon")
+InvSimpson2 <- vegan::diversity(asv_css2, index = "invsimpson") #inverted simpson
+#Beta <- vegdist(asv_css, "bray") #beta dissimilarity
+alpha_vegan2 <- cbind(Richness2, Shannon2, InvSimpson2, meta2)
+alpha_vegan2 <- rownames_to_column(alpha_vegan2, var = "id") %>% as_tibble()
+head(alpha_vegan2)
+```
+
+
+```{r}
+Locs <- c("Djib", "Oman","Taiwan", "Moorea", "Tahiti", "Tahaa", "Raia")
+alpha_vegan$Loc <- factor(alpha_vegan$Loc, levels = c("Djib", "Oman","Taiwan", "Moorea", "Tahiti", "Tahaa", "Raia")) 
+
+DHW <-  c("N", "Mod")
+alpha_vegan$DHW_cat <- factor(alpha_vegan$DHW_cat, levels = c("N", "Mod")) 
+
+T_bl <- c("Recent", "Long")
+alpha_vegan$Tbl_bin <- factor(alpha_vegan$Tbl_bin, levels = c("Recent", "Long")) 
+
+Season <- c("Winter", "Spring")
+alpha_vegan$Season <- factor(alpha_vegan$Season, levels = c("Winter", "Spring")) 
+
+S_region <- c("IndianOc", "Taiwan",  "FrPoly")
+alpha_vegan$S_region <- factor(alpha_vegan$S_region, levels = c("IndianOc", "Taiwan", "Aus", "NewCal", "FrPoly")) 
+  
+L_region <- c("IndianOc", "NPac", "EPac")
+alpha_vegan$L_region <- factor(alpha_vegan$L_region, levels = c("IndianOc", "NPac", "EPac")) 
+
+```
+
+```{r}
+#Plot adiv measures by location
+
+adiv_loc <- alpha_vegan2
+adiv_loc %>%
+gather(key = metric, value = value, c("Richness2", "Shannon2", "InvSimpson2")) %>%
+mutate(metric = factor(metric, levels = c("Richness2", "Shannon2", "InvSimpson2"))) %>%
+ggplot(aes(x = Loc, y = value)) +
+geom_boxplot(outlier.color = NA) +
+geom_jitter(aes(color = Loc, shape = S_region), height = 0, width = .2) +
+labs(x = "Location", y = "Alpha diversity measure") +
+facet_wrap(~ metric, scales = "free") +
+theme(legend.title = element_blank()) + scale_x_discrete(limits = Locs) 
+
+ggsave("adiv_loc_region_pdam_28Nov2021.pdf")
+ggsave("adiv_loc_region_pdam_28Nov2021.png")
+```
+
+```{r}
+#Plot adiv measures by Season
+
+adiv_sea <- alpha_vegan2
+adiv_sea %>%
+gather(key = metric, value = value, c("Richness2", "Shannon2", "InvSimpson2")) %>%
+mutate(metric = factor(metric, levels = c("Richness2", "Shannon2", "InvSimpson2"))) %>%
+ggplot(aes(x = Season, y = value)) +
+geom_boxplot(outlier.color = NA) +
+geom_jitter(aes(color = Season), height = 0, width = .2) +
+labs(x = "", y = "") +
+facet_wrap(~ metric, scales = "free") +
+theme(legend.title = element_blank()) + scale_x_discrete(limits = Season) 
+
+ggsave("adiv_sea_pdam_16Sep2021.pdf")
+
+#Plot adiv measures by T_bleach categories set
+
+adiv_tbl <- alpha_vegan2
+adiv_tbl %>%
+gather(key = metric, value = value, c("Richness2", "Shannon2", "InvSimpson2")) %>%
+mutate(metric = factor(metric, levels = c("Richness2", "Shannon2", "InvSimpson2"))) %>%
+ggplot(aes(x = Tbl_bin, y = value)) +
+geom_boxplot(outlier.color = NA) +
+geom_jitter(aes(color = Tbl_bin), height = 0, width = .2) +
+labs(x = "TSB", y = "Alpha diversity measure") +
+facet_wrap(~ metric, scales = "free") +
+theme(legend.title = element_blank()) + scale_x_discrete(limits = T_bl) 
+
+ggsave("adiv_tbl_pdam_28Nov2021.pdf")
+ggsave("adiv_tbl_pdam_28Nov2021.png")
+```
+
+```{r}
+
+#Plot adiv measures by small region categories set
+
+adiv_sreg <- alpha_vegan2
+adiv_sreg %>%
+gather(key = metric, value = value, c("Richness2", "Shannon2", "InvSimpson2")) %>%
+mutate(metric = factor(metric, levels = c("Richness2", "Shannon2", "InvSimpson2"))) %>%
+ggplot(aes(x = S_region, y = value)) +
+geom_boxplot(outlier.color = NA) +
+geom_jitter(aes(color = S_region), height = 0, width = .2) +
+labs(x = "", y = "") +
+facet_wrap(~ metric, scales = "free") +
+theme(legend.title = element_blank()) + scale_x_discrete(limits = S_region) 
+
+ggsave("adiv_sreg_pdam_1Nov2021.pdf")
+
+#Plot adiv measures by large region categories set
+
+adiv_lreg <- alpha_vegan2
+adiv_lreg %>%
+gather(key = metric, value = value, c("Richness2", "Shannon2", "InvSimpson2")) %>%
+mutate(metric = factor(metric, levels = c("Richness2", "Shannon2", "InvSimpson2"))) %>%
+ggplot(aes(x = L_region, y = value)) +
+geom_boxplot(outlier.color = NA) +
+geom_jitter(aes(color = L_region), height = 0, width = .2) +
+labs(x = "", y = "") +
+facet_wrap(~ metric, scales = "free") +
+theme(legend.title = element_blank()) + scale_x_discrete(limits = L_region) 
+
+ggsave("adiv_lreg_pdam_1Nov2021.pdf")
+```
+
+
+```{r}
+##New lm models, for comparison, with amended dataset without multimodal locations
+
+rich.lm.reduced <- lm(Richness2 ~ S_region/Loc + SST_a + Tbl_bin, na.action = "na.exclude", data = alpha_vegan2)
+
+summary(rich.lm.reduced)
+
+plot(rich.lm.reduced)
+```
+
+```{r}
+##New GLS with amended alpha_div dataset
+
+###Richness
+rich_gls_nest2 <- gls(Richness2 ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan2, na.action = "na.exclude", weights = varIdent(form = ~ 1|Loc), control = list(singular.ok = TRUE))
+
+summary(rich_gls_nest2)
+
+##Boxplots st residuals
+e.gls.Loc2 <- resid(rich_gls_nest2, type = "normalized")
+
+boxplot(e.gls.Loc2~alpha_vegan2$Loc)
+
+##Jitter boxplot with st residuals
+ggplot(meta2, aes(x = Loc, y = e.gls.Loc2)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+##qqplots with st residuals
+qqnorm(e.gls.Loc2,col="firebrick",abline = c(0,1))
+
+plot(rich_gls_nest2)
+```
+```{r}
+###Shannon
+shannon_gls_nest <- gls(Shannon2 ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan2, na.action = "na.exclude", weights = varIdent(form = ~ 1|Loc), control = list(singular.ok = TRUE))
+
+summary(shannon_gls_nest)
+
+##Boxplots st residuals
+e.gls.shannon <- resid(shannon_gls_nest, type = "normalized")
+
+boxplot(e.gls.shannon~alpha_vegan2$Loc)
+
+##Jitter boxplot with st residuals
+ggplot(meta2, aes(x = Loc, y = e.gls.shannon)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+##qqplots with st residuals
+qqnorm(e.gls.shannon,col="firebrick",abline = c(0,1))
+```
+```{r}
+###InvSimp
+invsimp_gls_nest <- gls(InvSimpson2 ~ S_region/Loc + SST_a + Tbl_bin, data = alpha_vegan2, na.action = "na.exclude", weights = varIdent(form = ~ 1|Loc), control = list(singular.ok = TRUE))
+
+summary(invsimp_gls_nest)
+
+##Boxplots st residuals
+e.gls.invsimp <- resid(invsimp_gls_nest, type = "normalized")
+
+boxplot(e.gls.invsimp~alpha_vegan2$Loc)
+
+##Jitter boxplot with st residuals
+ggplot(meta2, aes(x = Loc, y = e.gls.invsimp)) + geom_boxplot() + 
+geom_jitter(height = 0, width = .2)
+
+##qqplots with st residuals
+qqnorm(e.gls.invsimp,col="firebrick",abline = c(0,1))
+```
+
+```{r}
+
+library(ggpubr)
+scatterplot_SST <- alpha_vegan2
+scatterplot_SST %>%
+gather(key = metric, value = value, c("Richness2", "Shannon2", "InvSimpson2")) %>%
+mutate(metric = factor(metric, levels = c("Richness2", "Shannon2", "InvSimpson2"))) %>%
+ggplot(aes(x = SST_a, y = value)) + 
+geom_jitter() +  
+labs(x = "SST", y = "Alpha diversity measure") +
+facet_wrap(~ metric, scales = "free") +
+theme(legend.title = element_blank()) 
+
+ggsave("scatterplot_SST_noline_10Dec2021.pdf")
+ggsave("scatterplot_SST_noline_10Dec2021.png")
+
+```

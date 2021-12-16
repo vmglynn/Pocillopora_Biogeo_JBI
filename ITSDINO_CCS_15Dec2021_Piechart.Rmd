@@ -1,0 +1,351 @@
+---
+title: ITS2 DINO analyses for Pocillopora species across the Indo-Pacific, 6 April
+  2021
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+rm(list = ls())
+library(tidyr)
+library(purrr)
+library(dplyr)
+library(metagMisc)
+library(kableExtra)
+library(reshape2)
+library(stringr)
+library(tidyverse)
+library(phyloseq)
+library(magrittr)
+library(metagMisc)
+library(randomForest)
+library(knitr)
+library(phyloseqCompanion)
+library(seqinr)
+library(ggplot2)
+library(gridExtra)
+library(vegan)
+library(DESeq2)
+library(picante)
+library(remotes)
+library(ALDEx2)
+library(ggrepel)
+library(igraph)
+library(ellipse)
+library(dplyr)
+library(indicspecies)
+library("statisticalModeling")
+library(yhat)
+library("dunn.test")
+library(metagenomeSeq)
+```
+
+```{r}
+## Remember to setwd to where rds files are found
+##setwd("~/Users/victoriamarieglynn/Desktop/Desktop_May2021/CC_11May2021_DINOenv")
+
+##Read rds file generated from DADA2
+ps <- readRDS("symITSps_may2021.rds")
+ps 
+```
+
+```{r}
+taxa_names(ps) <- paste0("asv", seq(ntaxa(ps))) 
+# explicitly rename taxas to asvs
+
+otu <- otu_table(ps)
+tre <- phy_tree(ps)
+sam <- sample_data(ps)
+```
+
+```{r}
+##Taxa import, below is for the NCBI search, which was as follows on our Compute Canada clusters:
+
+###blastn \
+###-query uniqueSeqs_F-asv.fasta \
+###-db nt \
+###-out SymPortal_NCBIcrossref_Fb5.csv \
+###-evalue 1e-5 \
+###-outfmt "6 qseqid sseqid sscinames scomnames sskingdoms stitle qstart qend mismatch evalue length" \
+###-max_target_seqs 5
+
+## For NCBI, I manually looked through the generated table to assign clade and type level identifications. 
+
+##I also used SymPortal for taxonomic assignment, but this did not result in ITS clades being grouped together. This was run using the following: 
+
+###vsearch --usearch_global uniqueSeqs_DINO_Stewart.fasta --db refSeqDB.fa --blast6out DINOSt_taxa.txt --id 0.6 --output_no_hits --db refSeqDB.fa nomatch_DINOST.txt}
+```
+
+```{r}
+## setwd("~/Documents/MS_PocBiogeo_UPDATE-March2021")
+taxtable<-read.csv("DINO_NCBI_26feb2021_noNs.csv")
+summary(taxtable)
+
+##This CSVs has all N sequences removed, as not informative 
+```
+
+```{r}
+## taxonomy table into matrix 
+taxmat<-as.matrix(taxtable[,2:3])
+rownames(taxmat)<-taxtable$ASV
+```
+
+```{r}
+
+##Combine the taxonomy matrix and the otu_table (otus) into a phyloseq object
+
+TAX = tax_table(taxmat)
+
+## Check if any duplicated row names
+
+duplicated(TAX)
+
+taxa_are_rows(TAX)
+
+any(duplicated(rownames(TAX)))
+
+which(duplicated(rownames(TAX)))
+
+## If no duplicated row names: 
+
+ps_tax = phyloseq(otu, TAX, sam, tre)
+
+ps_tax
+```
+
+```{r}
+
+# Compare phyloseq's raw and now SymPortal amended ps's 
+ps_tax
+ps
+
+## Only 52.6% of taxa kept from ps to ps_tax
+
+```
+
+```{r}
+
+#Remove samples less 1000 reads
+
+ps1 = prune_samples(sample_sums(ps_tax) > 1000, ps_tax)
+ps1
+
+#Remove taxa not seen more than 1 times in at least 5% of the samples
+
+ps2 = filter_taxa(ps1, function(x) sum(x > 1) > (0.05*length(x)), TRUE)
+ps2
+
+# keep only taxa that were observed at least twice
+ps3 = prune_taxa(taxa_sums(ps2) >= 2, ps2)
+ps3 
+
+# remove taxonomy samples that were Ns
+
+ps4 = subset_samples(ps3, Spec != "P_spp")
+
+## Remove Fr Poly as ASVs all = 0
+
+ps5 = subset_samples(ps4, Loc != "FrenPoly") 
+```
+
+```{r}
+## Assign ASV numeric values to replace sequences
+n_seqs <- seq(ntaxa(ps5))
+len_n_seqs <- nchar(max(n_seqs))
+taxa_seqs <- taxa_names(ps5)
+asvs <- paste("ASV", formatC(n_seqs,
+width = len_n_seqs,
+flag = "0"), sep = "_")
+taxa_names(ps5) <- asvs
+
+## remove samples with otu = 0 
+ps6 <- prune_samples(sample_sums(ps5) >= 1, ps5)
+ps6
+```
+
+```{r}
+
+dfASV_seq <- data.frame(asv=asvs, seq=taxa_seqs, stringsAsFactors = FALSE)
+write.csv(dfASV_seq, file="dfASV_seq.csv", row.names = FALSE)
+write.fasta(as.list(taxa_seqs), asvs, "asv_seq.fasta", open = "w", nbchar = 60, as.string =TRUE)
+
+saveRDS(dfASV_seq, file="dfASV_Seq.rds")
+```
+
+```{r}
+## Remove singletons
+ps6_filt <- filter_taxa(ps6, function(x) sum(x > 1) > 1, TRUE)
+ps6_filt
+```
+
+```{r}
+
+## CSS transformation
+
+ps6_filt_css <- phyloseq_transform_css(ps6_filt, norm = TRUE, log = FALSE)
+ps_normalized <- list()
+normalization <- 'css'
+ps_normalized[[normalization]] <- ps6_filt_css
+ps_normalized[[normalization]]
+
+colnames(sample_data(ps6_filt_css))
+saveRDS(ps6_filt_css, file="ps6_filt_css.rds")
+
+```
+
+```{r} 
+
+##Binary transformation, did not use
+
+ps_filt_binary <- ps6_filt_css
+otups2 <- otu_table(ps_filt_binary)
+
+# if >= 1, then transform value to 1
+otups2[otups2 >= 1] <- 1
+otu_table(ps_filt_binary) <- otups2
+input_data <- t(as(otu_table(ps_filt_binary), "matrix"))
+sampleData <- sample_data(ps_filt_binary)
+all_data <- merge(sampleData, input_data, by = 0)
+rownames(all_data) <- all_data$Row.names
+all_data <- subset(all_data, select = -c(Row.names))
+all_nonNA_data <- all_data[,colSums(is.na(all_data))<nrow(all_data)]
+all_nonNA_data$yrSeason <- as.factor(all_nonNA_data$Loc)
+kable(head(all_nonNA_data[,c(1:8)]))
+```
+
+```{r}
+tax_info <- as.data.frame(tax_table(ps_filt_binary))
+saveRDS(ps_filt_binary, file="ps_filt_binary.rds")
+normalization <- 'binary'
+
+ps_normalized[[normalization]] <- ps_filt_binary
+ps_normalized[[normalization]]
+
+saveRDS(ps_normalized, file="ps_normalized.rds")
+
+tax_info <- as.data.frame(tax_table(ps6_filt_css))
+write.csv(tax_info, file="tax_info.csv")
+```
+
+
+```{r}
+
+## Set random seed for reproducibility 
+
+set.seed(8765)
+```
+
+```{r}
+##Alpha div
+
+#Remove Panama
+ps7 <- subset_samples(ps6_filt_css, Loc != "Panam") 
+
+#Remove P. me
+ps8 <- subset_samples(ps7, Spec != "P_me") 
+
+ps8
+
+colnames(sample_data(ps8))
+```
+
+```{r}
+Locs <- c("Djib", "Oman", "Aus_GBR_Orp", "Aus_GBR_MI", "Aus_GBR_Heron", "NewCal","Taiwan", "Moorea", "Tahiti", "Tahaa ", "Raia")
+
+Locs
+
+Loc_red <- c("Oman", "Aus_GBR_Orp", "Aus_GBR_MI", "Aus_GBR_Heron", "NewCal", "Panam")
+
+Spp <- c("P. acuta", "P. damicornis") 
+```
+
+```{r}
+
+ps_Di <- subset_samples(ps8, Loc == "Djib")
+ps_Om <- subset_samples(ps8, Loc == "Oman") 
+ps_Orp <- subset_samples(ps8, Loc == "Aus_GBR_Orp")
+ps_He <- subset_samples(ps8, Loc == "Aus_GBR_Heron")
+ps_MI <- subset_samples(ps8, Loc == "Aus_GBR_MI")
+ps_NC <- subset_samples(ps8, Loc == "NewCal")
+ps_Tai <- subset_samples(ps8, Loc == "Taiwan") 
+ps_Mo <- subset_samples(ps8, Loc == "Moorea") 
+ps_Tah <- subset_samples(ps8, Loc == "Tahiti") 
+ps_Ta <- subset_samples(ps8, Loc == "Tahaa") 
+ps_Ra <- subset_samples(ps8, Loc == "Raia")
+
+ps_Pac <- subset_samples(ps8, Spec == "P_ac")
+ps_Pdam <- subset_samples(ps8, Spec == "P_dam")
+```
+
+```{r}
+
+#Pie charts for ITS type across locations
+
+pieDi <- plot_bar(ps_Di, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieDi
+
+pieOm <- plot_bar(ps_Om, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieOm
+
+pieOrp <- plot_bar(ps_Orp, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieOrp
+
+pieHe <- plot_bar(ps_He, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieHe
+
+pieMI <- plot_bar(ps_MI, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieMI
+
+pieNC <- plot_bar(ps_NC, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum", geom = "bar") + labs(x = "Locations", y = "Relative Abundance\n") + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieNC
+```
+
+```{r}
+
+pieTai <- plot_bar(ps_Tai, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieTai
+
+pieMo <- plot_bar(ps_Mo, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieMo
+
+
+pieTa <- plot_bar(ps_Ta, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieTa
+
+pieTah <- plot_bar(ps_Tah, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieTah
+
+pieRa <- plot_bar(ps_Ra, x="Loc", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Locations", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pieRa
+
+```
+
+```{r}
+
+#Pie charts ITS type across species
+
+pie_Pdam <- plot_bar(ps_Pdam, x="Spec", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Spec", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pie_Pdam
+
+pie_Pac <- plot_bar(ps_Pac, x="Spec", fill="ITStype") + stat_summary(fun.y = "sum",geom="bar") + labs(x = "Spec", y = "Relative Abundance\n") + stat_summary(fun=sum,geom="bar",show.legend = FALSE) + geom_bar(position="stack", stat="identity") + scale_fill_discrete(name = "ITS type") + coord_polar("y", start = 0) + theme_void()
+
+pie_Pac
+```
+
