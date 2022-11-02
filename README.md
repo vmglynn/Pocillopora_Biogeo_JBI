@@ -4,7 +4,7 @@
 
 This GitHub repository contains the code and some of the data needed to recreate the analysis and manuscript of:
 
-Glynn, V. M., Vollmer, S. V., Kline, D.I. & Barrett, R. D. H. Environmental and geographic factors structure cauliflower coral’s algal symbiosis across the Indo-Pacific. _Under revision_, _Journal of Biogeography_.
+Glynn, V. M., Vollmer, S. V., Kline, D.I. & Barrett, R. D. H. Environmental and geographic factors structure cauliflower coral’s algal symbiosis across the Indo-Pacific. _Journal of Biogeography_, in review. 
 
 ### Contents
 
