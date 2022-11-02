@@ -18,4 +18,4 @@ This repository contains:
 - Resulting taxonomic assignment from Symportal and NCBI 
 
 ### Questions
-If you have questions about the data, please contact Victoria Marie Glynn (victoria.glynn@mail.mcgill.ca).
+If you have questions about the scripts and the associated data, please contact Victoria Marie Glynn (victoria.glynn@mail.mcgill.ca).
