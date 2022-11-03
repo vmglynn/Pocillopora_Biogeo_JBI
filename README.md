@@ -1,4 +1,4 @@
-# Environmental and geographic factors structure cauliflower coral’s algal symbiosis across the Indo-Pacific 
+# Environmental and geographic factors structure cauliflower coral’s algal symbioses across the Indo-Pacific 
 
 ### About
 
