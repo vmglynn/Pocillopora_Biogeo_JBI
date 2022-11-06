@@ -17,5 +17,5 @@ This repository contains four folders:
 ### Questions
 If you have questions about the scripts and the associated data, please contact Victoria Marie Glynn (victoria.glynn@mail.mcgill.ca).
 
-.. image:: https://zenodo.org/badge/424781916.svg
-   :target: https://zenodo.org/badge/latestdoi/424781916
+[![DOI](https://zenodo.org/badge/424781916.svg)](https://zenodo.org/badge/latestdoi/424781916)
+
